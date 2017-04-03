@@ -1,5 +1,7 @@
 // @flow
 
+"use strict";
+
 import React from 'react';
 import {render} from 'react-dom'
 import {Router, Route, hashHistory} from 'react-router'
@@ -15,9 +17,6 @@ class Menu extends React.Component {
 
 class CustomerService {
     static instance = null;
-    lastId = 0;
-
-    customers = [];
 
     // Return singleton
     static get() {
@@ -46,7 +45,6 @@ class CustomerService {
       return fetch('/api/customers/'+customerId)
       .then((response) => response.json())
       .then((responseJson) => {
-        console.log(responseJson);
         return responseJson;
       })
       .catch((error) => {
@@ -55,14 +53,22 @@ class CustomerService {
     }
 
     addCustomer(name, city) {
-        return new Promise((resolve, reject) => {
-            if (name && city) {
-                this.customers.push({id: ++this.lastId, name: name, city: city});
-                resolve(this.lastId);
-                return;
-            }
-            reject("name or city empty");
-        });
+
+        return fetch('api/add', {
+          method: 'POST',
+          headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              },
+          body: JSON.stringify({
+              name: name,
+              city: city
+            })
+          }).then((response) => {
+            return response.json();
+          }).catch((error) => {
+            console.error(error);
+          });
     }
 
     getIndex(id) {
@@ -74,45 +80,56 @@ class CustomerService {
         return -1; //to handle the case where the value doesn't exist
     }
 
-    delCustomer(id) {
-        return new Promise((resolve, reject) => {
-            if (id) {
-                var index = this.getIndex(id);
-                this.customers.splice(index, 1);
+    delCustomer(id){
 
-                resolve(this.lastId);
-                return;
+      return fetch('/api/del/'+id,{method:'delete'})
+        .then(
+          function(response){
+            if(response.status !== 200){
+              return -1;
             }
-            reject("id not found");
-        });
+            return 1;
+          }
+        )
     }
 
     updateCustomer(id, name, city) {
-        var index = this.getIndex(id);
-        return new Promise((resolve, reject) => {
-            if (name && city) {
-                this.customers[index].name = name;
-                this.customers[index].city = city;
-                resolve(this.lastId);
-                return;
+      return fetch('/api/upd/'+id, {
+        method:'put',
+        headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            },
+        body: JSON.stringify({
+            name: name,
+            city: city
+          })
+      })
+      .then(
+          function(response){
+            if(response.status !== 200){
+              return -1;
             }
-            reject("Could not update! Something went wrong :(");
-        });
+            return 1;
+          }
+        )
     }
 }
 
 class CustomerListComponent extends React.Component {
-    state = {status: "", customers: [], newCustomerName: "", newCustomerCity: "", deleteCustomerId: 0}
+    state = {status: "", customers: [], newCustomerName: "", newCustomerCity: "", deleteCustomerId: 0, alertClassName: "alert alert-success"}
+
 
     constructor() {
         super();
 
         CustomerService.get().getCustomers().then((result) => {
-            this.setState({status: "successfully loaded customer list", customers: result});
+            this.setState({status: "Successfully loaded customer list", customers: result, alertClassName: "alert alert-success"});
         }).catch((reason) => {
-            this.setState({status: "error: " + reason});
+            this.setState({status: "Error: " + reason, alertClassName: "alert alert-danger"});
         });
     }
+
 
     // Event methods, which are called in render(), are declared as properties:
     onNewCustomerFormChanged = (event) => {
@@ -134,35 +151,46 @@ class CustomerListComponent extends React.Component {
         var name = this.state.newCustomerName;
         var city = this.state.newCustomerCity;
         CustomerService.get().addCustomer(name, city).then((result) => {
-            this.state.customers.push({id: result, name: name, city});
+            this.state.customers.push({"id": result.id, "name": name, "city":city});
             this.setState({
-                status: "successfully added new customer",
+                status: "Successfully added " + name + ":)",
                 customers: this.state.customers,
                 newCustomerName: "",
-                newCustomerCity: ""
+                newCustomerCity: "",
+                alertClassName: "alert alert-success"
             });
         }).catch((reason) => {
-            this.setState({status: "error: " + reason});
+            this.setState({status: "Error: " + reason, alertClassName: "alert alert-danger"});
         });
     }
 
     deleteCustomer = (event) => {
+
         event.preventDefault();
         var id = this.state.deleteCustomerId;
-        CustomerService.get().delCustomer(id).then((result) => {
 
+        CustomerService.get().delCustomer(id).then((result) => {
             var index = this.getIndex(id);
+
             if (index != -1) {
                 this.state.customers.splice(index, 1);
-
                 this.setState({
-                    status: "successfully deleted customer",
+                    status: "Successfully deleted customer with id " + id,
                     customers: this.state.customers,
-                    deleteCustomerId: ""
+                    deleteCustomerId: "",
+                    alertClassName: "alert alert-success"
                 });
+
+            } else {
+              this.setState({
+                status: "Customer with id " + id + " not found",
+                customers:this.state.customers,
+                deleteCustomerId: "",
+                alertClassName: "alert alert-danger"
+              });
             }
         }).catch((reason) => {
-            this.setState({status: "error: " + reason});
+            this.setState({status: "Error: " + reason, alertClassName: "alert alert-danger"});
         });
     }
 
@@ -170,7 +198,7 @@ class CustomerListComponent extends React.Component {
         var listItems = this.state.customers.map((customer) =>
             <a href={"/#/customer/"+customer.id} className="list-group-item" key={customer.id}>{customer.name}</a>
         );
-        return <div>status: {this.state.status}<br/>
+        return <div><div className={this.state.alertClassName}>{this.state.status}</div>
             <div className="list-group">{listItems}</div>
             <form onSubmit={this.onNewCustomer} onChange={this.onNewCustomerFormChanged}>
                 <label>Name:<input type="text" name="newCustomerName" value={this.state.newCustomerName} className="form-control"/></label>
@@ -186,16 +214,15 @@ class CustomerListComponent extends React.Component {
 }
 
 class CustomerDetailsComponent extends React.Component {
-    state = {status: "", customer: {}, updateName: "", updateCity: ""}
+    state = {status: "", customer: {}, updateName: "", updateCity: "", alertClassName: "alert alert-success"}
 
     constructor(props) {
         super(props);
 
         CustomerService.get().getCustomer(props.params.customerId).then((result) => {
-          console.log(result);
-            this.setState({status: "successfully loaded customer details", customer: result});
+            this.setState({status: "successfully loaded customer details", customer: result, alertClassName: "alert alert-success"});
         }).catch((reason) => {
-            this.setState({status: "error: " + reason});
+            this.setState({status: "error: " + reason, alertClassName: "alert alert-danger"});
         });
     }
 
@@ -205,20 +232,35 @@ class CustomerDetailsComponent extends React.Component {
         var name = this.state.updateName;
         var city = this.state.updateCity;
 
-        if (name === "") name = this.state.customer.name;
-        if (city === "") city = this.state.customer.city;
+        if (name === ""){
+          name = this.state.customer.name;
+        }
+        if (city === "") {
+          city = this.state.customer.city;
+        }
 
         CustomerService.get().updateCustomer(this.state.customer.id, name, city).then((result) => {
 
-            this.setState({
-                status:"Customer updated",
-                customer:{id:this.state.customer.id, name:name, city:city},
-                updateName:"",
-                updateCity:""
-            })
+            if(result = 1){
+              this.setState({
+                  status:"Customer updated",
+                  customer:{id:this.state.customer.id, name:name, city:city},
+                  updateName:"",
+                  updateCity:"",
+                  alertClassName: "alert alert-success"
+              })
+            } else {
+              this.setState({
+                  status:"Customer not updated",
+                  updateName:"",
+                  updateCity:"",
+                  alertClassName: "alert alert-danger"
+              })
+            }
 
-
-        })
+        }).catch((reason) => {
+            this.setState({status: "Error: " + reason, alertClassName: "alert alert-danger"});
+        });
     }
 
     onUpdateCustomerChanged = (event) => {
@@ -226,7 +268,7 @@ class CustomerDetailsComponent extends React.Component {
     }
 
     render() {
-        return <div><div>status: {this.state.status}</div><br/>
+        return <div><div className={this.state.alertClassName}>{this.state.status}</div>
             <ul className="list-group">
                 <li className="list-group-item">Name: {this.state.customer.name}</li>
                 <li className="list-group-item">City: {this.state.customer.city}</li>
